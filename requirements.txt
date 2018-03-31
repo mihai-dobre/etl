@@ -1,0 +1,6 @@
+Django==1.11
+djangorestframework==3.7.7
+Markdown==2.6.11
+pandas==0.22.0
+IP2Location==8.0.0
+psycopg2==2.7.4
