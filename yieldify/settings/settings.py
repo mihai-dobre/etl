@@ -14,18 +14,18 @@ import os
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
+print(BASE_DIR)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.11/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
+# This should not be here. For production move the secret key somewhere safe!
 SECRET_KEY = '=0x4)fbb*ylca0c())*&2(ojpq+z+a0ezriobioz3#4p0og71&'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 
 # Application definition
@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    'django_extensions'
 ]
 
 MIDDLEWARE = [
@@ -121,3 +123,45 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
+LOG_FOLDER = 'log'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '%(levelname)-8s %(asctime)s %(filename)s |%(lineno)4d| %(message)s',
+            'datefmt': "%d/%b/%Y %H:%M:%S"
+        },
+        'clear_view': {
+            'format': '%(asctime)s %(levelname)9s %(lineno)4s %(module)s %(message)s',
+            'datefmt': '%d.%m.%Y-%H:%M:%S'
+        },
+    },
+    'handlers': {
+        'etl': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, LOG_FOLDER, 'etl.log'),
+            'formatter': 'verbose',
+            'maxBytes': 1024*1024,
+            'backupCount': 5,
+        },
+        'console': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'etl': {
+            'handlers': ['etl'],
+            'level': 'DEBUG'
+        },
+    },
+}
+
