@@ -11,11 +11,15 @@ https://docs.djangoproject.com/en/1.11/ref/settings/
 """
 
 import os
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 print(BASE_DIR)
 
+for filename in os.listdir(BASE_DIR):
+    if filename.endswith('.env'):
+        load_dotenv("{}/{}".format(BASE_DIR, filename))
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.11/howto/deployment/checklist/
 
@@ -38,7 +42,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'django_extensions'
+    'yieldify.apps.api',
+    'django_extensions',
+    'rest_framework',
+    'rest_framework_docs',
 ]
 
 MIDDLEWARE = [
@@ -50,6 +57,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
 ROOT_URLCONF = 'yieldify.urls'
 
@@ -75,16 +83,27 @@ WSGI_APPLICATION = 'yieldify.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/1.11/ref/settings/#databases
 
+DB_NAME = os.getenv('DB_NAME', 'etl')
+DB_USER = os.getenv('DB_USER', 'yieldify')
+DB_PASS = os.getenv('DB_PASS', '###')
+DB_PORT = os.getenv('DB_PORT', 5432)
+print(DB_NAME)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',
-        'USER': 'postgres',
-        'HOST': 'db',
-        'PORT': 5432,
+        'NAME': DB_NAME,
+        'USER': DB_USER,
+        'HOST': 'localhost',
+        'PORT': DB_PORT,
     }
 }
 
+REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': (
+        'rest_framework.renderers.JSONRenderer',
+        # 'rest_framework.renderers.BrowsableAPIRenderer',
+    )
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/1.11/ref/settings/#auth-password-validators
@@ -123,7 +142,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
-LOG_FOLDER = 'log'
+LOG_FOLDER = 'logs'
 
 LOGGING = {
     'version': 1,
@@ -147,6 +166,30 @@ LOGGING = {
             'maxBytes': 1024*1024,
             'backupCount': 5,
         },
+        'browser': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, LOG_FOLDER, 'browser.log'),
+            'formatter': 'verbose',
+            'maxBytes': 1024*1024,
+            'backupCount': 5,
+        },
+        'op_sys': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, LOG_FOLDER, 'op_sys.log'),
+            'formatter': 'verbose',
+            'maxBytes': 1024*1024,
+            'backupCount': 5,
+        },
+        'device': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, LOG_FOLDER, 'device.log'),
+            'formatter': 'verbose',
+            'maxBytes': 1024*1024,
+            'backupCount': 5,
+        },
         'console': {
             'level': 'DEBUG',
             'class': 'logging.StreamHandler',
@@ -154,12 +197,24 @@ LOGGING = {
     },
     'loggers': {
         'django': {
-            'handlers': ['file'],
+            'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': True,
         },
         'etl': {
             'handlers': ['etl'],
+            'level': 'DEBUG'
+        },
+        'browser': {
+            'handlers': ['browser'],
+            'level': 'DEBUG'
+        },
+        'op_sys': {
+            'handlers': ['op_sys'],
+            'level': 'DEBUG'
+        },
+        'device': {
+            'handlers': ['device'],
             'level': 'DEBUG'
         },
     },
