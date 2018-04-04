@@ -79,3 +79,6 @@ Each endpoint has its own log file:
 * `logs/op_sys.log`
 The management command has a separate log file:
 * `logs/etl.log`
+
+### Database
+![Database diagram](https://github.com/mihai-dobre/etl_yieldify/blob/master/etl_yieldify_database.png)
