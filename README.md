@@ -50,7 +50,7 @@ To be able to access the django admin page you need to create a django superuser
 ### Run
 * start docker containers: 
  
- `docker-compose up` 
+  `docker-compose up` 
  
 * etl management command:
   
