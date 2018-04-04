@@ -81,4 +81,8 @@ The management command has a separate log file:
 * `logs/etl.log`
 
 ### Database
+Diagram generated with graphviz:
+
+`./manage.py graph_models api --pygraphviz -a -g -o my_project_visualized.png`
+
 ![Database diagram](https://github.com/mihai-dobre/etl_yieldify/blob/master/etl_yieldify_database.png)
