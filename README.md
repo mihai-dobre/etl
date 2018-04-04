@@ -18,10 +18,6 @@ It is a django management command used for parsing and loading data into the dat
 * Top 5 Operating systems based on number of unique users
 
 ## Commands:
-* Create a postgres user: 
-  
-  `docker-compose run db psql -h db -p 5432 -U postgres --command "CREATE USER yieldify WITH PASSWORD 'yieldify';CREATE DATABASE etl OWNER yieldify;GRANT ALL PRIVILEGES ON DATABASE etl TO yieldify;"`
-
 
 ### Installation:
 
