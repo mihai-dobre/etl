@@ -33,4 +33,4 @@ class DeviceView(BaseView):
         'user_id',
         'device',
         'device_type',
-        'device_brand')
+        'device_brand').order_by('-timestamp')

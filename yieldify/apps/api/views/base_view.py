@@ -34,7 +34,7 @@ class BaseView(ListAPIView):
             end_datetime = datetime.datetime.fromtimestamp(int(end_timestamp)).astimezone(tz=pytz.utc)
             log.info('end_date %s', end_datetime)
             self.queryset = self.queryset.filter(timestamp__lt=end_datetime)
-        log.info('queryset: %s', self.queryset)
+        # log.info('queryset: %s', self.queryset)
         return self.queryset
 
     def get(self, request):

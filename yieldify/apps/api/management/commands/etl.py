@@ -147,16 +147,15 @@ class Command(BaseCommand):
                 continue
 
             chunks = extractor(file)
-            pr = cProfile.Profile()
-            pr.enable()
+            # pr = cProfile.Profile()
+            # pr.enable()
             for chunk in chunks:
                 transform_and_load(chunk, input_file_instance)
+            # pr.disable()
+            # s = io.StringIO()
+            # sortby = 'cumulative'
+            # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            # ps.print_stats()
+            # print(s.getvalue())
 
-            print('Statistics for file: {}\n'.format(file))
-            print(json.dumps(self.compute_result(file), indent=2))
-            pr.disable()
-            s = io.StringIO()
-            sortby = 'cumulative'
-            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            ps.print_stats()
-            print(s.getvalue())
+        print(json.dumps(self.compute_result(file), indent=2))

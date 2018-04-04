@@ -31,4 +31,4 @@ class OpSysView(BaseView):
         'timestamp',
         'user_id',
         'os',
-        'os_version')
+        'os_version').order_by('-timestamp')

@@ -31,5 +31,5 @@ class BrowserView(BaseView):
         'timestamp',
         'user_id',
         'browser',
-        'browser_version')
+        'browser_version').order_by('-timestamp')
 
