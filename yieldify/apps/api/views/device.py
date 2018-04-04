@@ -1,11 +1,8 @@
-from rest_framework.generics import ListAPIView
-from rest_framework.response import Response
-from django.utils import timezone
+from .base_view import BaseView
 from ..models import Request
-from ..log import log_browser as log
 
 
-class DeviceView(ListAPIView):
+class DeviceView(BaseView):
     """
         ### API endpoint for getting a list of used devices.
         curl example: `curl -v -H "Accept: application/json" -H "Content-Type: application/json" http://localhost:8000/stats/device/`
@@ -23,20 +20,5 @@ class DeviceView(ListAPIView):
 
         **Live endpoint is available by clicking on the plug icon on the top-right side of the endpoint's bar.**
     """
-    authentication_classes = ()
-    permission_classes = ()
     queryset = Request.objects.all().values('id', 'timestamp', 'user__user_id', 'agent__device',
                                             'agent__device_type', 'agent__device_brand')
-    paginate_by_param = 'page_size'
-
-    def get(self, *args, **kwargs):
-        """
-        Method used to get information about the browsers used.
-        """
-        log.info("GET [%s] start processing.", self.request.path)
-        log.info("GET args: %s", kwargs)
-
-        start_time = int(timezone.now().timestamp())
-
-        log.info('GET [%s] completed in %s seconds.', self.request.path, int(timezone.now().timestamp() - start_time))
-        return Response(self.paginate_queryset(self.get_queryset()), status=200)

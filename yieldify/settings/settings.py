@@ -93,7 +93,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': DB_NAME,
         'USER': DB_USER,
-        'HOST': 'db',
+        'HOST': 'localhost',
         'PORT': DB_PORT,
     }
 }
@@ -132,7 +132,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-# TIME_ZONE = 'UTC'
+TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
@@ -196,6 +196,14 @@ LOGGING = {
             'maxBytes': 1024*1024,
             'backupCount': 5,
         },
+        'base_view': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, LOG_FOLDER, 'base_view.log'),
+            'formatter': 'verbose',
+            'maxBytes': 1024*1024,
+            'backupCount': 5,
+        },
         'console': {
             'level': 'DEBUG',
             'formatter': 'simple',
@@ -221,6 +229,10 @@ LOGGING = {
         },
         'device': {
             'handlers': ['device'],
+            'level': 'DEBUG'
+        },
+        'base_view': {
+            'handlers': ['base_view'],
             'level': 'DEBUG'
         },
     },
