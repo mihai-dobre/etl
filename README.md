@@ -51,7 +51,7 @@ To be able to access the django admin page you need to create a django superuser
 * start docker containers: 
  
  `docker-compose up` 
-  * *wait for the containers to start*
+ 
 * etl management command:
   
   `docker exec web python3 manage.py etl -dir '<directory_with_input_tsv.gz_input_files'`
