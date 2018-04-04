@@ -1,3 +1,5 @@
+from django.db.models import F
+
 from .base_view import BaseView
 from ..models import Request
 
@@ -20,6 +22,14 @@ class BrowserView(BaseView):
 
         **Live endpoint is available by clicking on the plug icon on the top-right side of the endpoint's bar.**
     """
-    queryset = Request.objects.all().values('id', 'timestamp', 'user__user_id', 'agent__op_sys',
-                                            'agent__op_sys_version')
+    queryset = Request.objects.annotate(
+        user_id=F('user__user_id'),
+        browser=F('agent__browser'),
+        browser_version=F('agent__browser_version')
+    ).values(
+        'id',
+        'timestamp',
+        'user_id',
+        'browser',
+        'browser_version')
 

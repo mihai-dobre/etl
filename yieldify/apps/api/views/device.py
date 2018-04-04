@@ -1,3 +1,5 @@
+from django.db.models import F
+
 from .base_view import BaseView
 from ..models import Request
 
@@ -20,5 +22,15 @@ class DeviceView(BaseView):
 
         **Live endpoint is available by clicking on the plug icon on the top-right side of the endpoint's bar.**
     """
-    queryset = Request.objects.all().values('id', 'timestamp', 'user__user_id', 'agent__device',
-                                            'agent__device_type', 'agent__device_brand')
+    queryset = Request.objects.annotate(
+        user_id=F('user__user_id'),
+        device=F('agent__device'),
+        device_type=F('agent__device_type'),
+        device_brand=F('agent__device_brand')
+    ).values(
+        'id',
+        'timestamp',
+        'user_id',
+        'device',
+        'device_type',
+        'device_brand')
