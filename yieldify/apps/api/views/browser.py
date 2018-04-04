@@ -1,10 +1,11 @@
-from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
 from django.utils import timezone
+from ..models import Request
 from ..log import log_browser as log
 
 
-class BrowserView(APIView):
+class BrowserView(ListAPIView):
     """
         ### API endpoint for getting a list of used browsers.
         curl example: `curl -v -H "Accept: application/json" -H "Content-Type: application/json" http://localhost:8000/stats/browser/`
@@ -24,6 +25,9 @@ class BrowserView(APIView):
     """
     authentication_classes = ()
     permission_classes = ()
+    queryset = Request.objects.all().values('id', 'timestamp', 'user__user_id', 'agent__op_sys',
+                                            'agent__op_sys_version')
+    paginate_by_param = 'page_size'
 
     def get(self, *args, **kwargs):
         """
@@ -37,4 +41,4 @@ class BrowserView(APIView):
         start_time = int(timezone.now().timestamp())
 
         log.info('GET [%s] completed in %s seconds.', self.request.path, int(timezone.now().timestamp() - start_time))
-        return Response({'browsers': 'all ok'}, status=200)
+        return Response(self.paginate_queryset(self.get_queryset()), status=200)
