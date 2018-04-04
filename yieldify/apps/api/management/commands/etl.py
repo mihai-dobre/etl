@@ -1,8 +1,13 @@
-import sys
-import argparse
-import csv
+import os
+from hashlib import md5
 import json
+import cProfile, pstats, io
 from django.core.management.base import BaseCommand
+from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
+from django.db.models import Count
+from yieldify.apps.api.log import log_etl as log
+from yieldify.apps.api.utils import extractor, transform_and_load
+from yieldify.apps.api.models import InputFile, IP, Request, CustomUser, Agent
 
 
 class Command(BaseCommand):
@@ -23,61 +28,135 @@ class Command(BaseCommand):
             '-dest',
             action='store',
             type=str,
-            required=True,
             dest='dest',
             help='destination of the aggregated data: stdout or database'
         )
 
+    def should_be_parsed(self, file):
+        """
+        Methid that checks if a file needs to be parsed or not
+        :param file:
+        :return:
+        """
+        computed_md5 = md5(str('{file_path} | {file_size} | {file_last_modified_time}'.format(
+            file_path=file,
+            file_size=os.stat(file).st_size,
+            file_last_modified_time=os.stat(file).st_mtime)).encode('utf-8')).hexdigest()
+        log.info('Computed md5 for file: %s is: %s', file, computed_md5)
+        try:
+            db_file = InputFile.objects.get(path=file)
+            input_file_instance = None
+            if db_file.md5 != computed_md5:
+                log.info('File has been modified. Updating md5: %s', file)
+                db_file.md5 = computed_md5
+                db_file.save()
+                input_file_instance = db_file
+        except ObjectDoesNotExist:
+            # file not found in the database. Should be added and parsed
+            log.info('Inserting new file into database: %s', file)
+            db_file = InputFile()
+            db_file.name = file.split(os.sep)[-1]
+            db_file.md5 = computed_md5
+            db_file.path = file
+            db_file.save()
+            input_file_instance = db_file
+        except MultipleObjectsReturned:
+            log.exception('get returned multiple results. Please check the database for consistency.')
+            log.warning('Skipping parsing file %s', file)
+            input_file_instance = None
+        except Exception:
+            log.exception('Unknown error occured.')
+            log.warning('Skipping parsing file: %s', file)
+            input_file_instance = None
+
+        return input_file_instance
+
+    def compute_result(self, file):
+        """
+        Compute the statistics
+        :return: dictionary containing the statistics
+        """
+        result = {}
+
+        # get Top 5 Countries based on number of events
+        countries = IP.objects.values('country').annotate(count=Count('country')).order_by('-count')[:5]
+        result['countries'] = ['{}    {}'.format(x['country'], x['count']) for x in countries]
+        # get Top 5 Cities based on number of events
+        cities = IP.objects.values('city').annotate(count=Count('city')).order_by('-count')[:5]
+        result['cities'] = ['{}    {}'.format(x['city'], x['count']) for x in cities]
+        # Top 5 Browsers based on number of unique users
+        requests_of_unique_users = Request.objects.distinct('user').values_list('agent')
+        browsers = Agent.objects.filter(id__in=requests_of_unique_users).values('browser').annotate(
+            count=Count('browser')).order_by('-count')[:5]
+        # resulted query:
+        # SELECT api_agent.browser, COUNT(api_agent.browser) AS count
+        # FROM api_agent
+        # WHERE api_agent.id IN(
+        #     SELECT DISTINCT ON(request.user_id) request.agent_id AS Col1
+        #     FROM api_request request)
+        # GROUP BY api_agent.browser
+        # ORDER BY count DESC;
+        result['browsers'] = ['{}    {}'.format(x['browser'], x['count']) for x in browsers]
+        # Top 5 Operating systems based on number of unique users
+        oss = Agent.objects.filter(id__in=requests_of_unique_users).values('op_sys').annotate(
+            count=Count('op_sys')).order_by('-count')[:5]
+        # resulted query:
+        # SELECT api_agent.os, COUNT(api_agent.os) AS count
+        # FROM api_agent
+        # WHERE api_agent.id IN(
+        #     SELECT DISTINCT ON(request.user_id) request.agent_id AS Col1
+        #     FROM api_request request)
+        # GROUP BY api_agent.os
+        # ORDER BY count DESC;
+        result['os'] = ['{}    {}'.format(x['op_sys'], x['count']) for x in oss]
+        return result
+
     def handle(self, *args, **options):
         """
         Method that iterates over the files in a directory. Parses all the tsv files, enhances the data and pushes it
-        to the database.
+        to the database. It will compute an md5sum over the filename + timestamp last_modified + size and will not
+        consider the file for parsing is the existing md5sum is the same with the computed one. So if you run the
+        management command multiple times on the same files, the parsing will happen only on the first run. For all
+        others, the data will be returned directly from the database.
         :param args:
-        :param options: is a dictionary with command line arguments.
+        :param options: is a dictionary containing the command line arguments.
         :return:
         """
-        header = ['date', 'state', 'start_time', 'end_time', 'group_id']
-        # options['tslots']:
         log.info(options)
-        f = options['timeslots']
-        log.info(type(f))
-        csv_data = csv.reader(f, delimiter=';')
-        for row in csv_data:
-            # transform the data into a dict according with the header
-            csv_timeslot_dict = dict(zip(header, row))
-            csv_timeslot_dict['start_time'] = arrow.get('{}T{}'.format(csv_timeslot_dict['date'],
-                                                                       csv_timeslot_dict['start_time']), tz='London/Europe')
-            csv_timeslot_dict['end_time'] = arrow.get('{}T{}'.format(csv_timeslot_dict['date'],
-                                                                       csv_timeslot_dict['end_time']), tz='London/Europe')
-            csv_timeslot_dict['date'] = arrow.get(csv_timeslot_dict['date'])
-            # log.info('csv_row: %s', csv_timeslot_dict)
+        dir_path = options['dir']
+        if not os.path.exists(dir_path):
+            raise NotADirectoryError('Path specified for -dir argument is not valid: {}'.format(dir_path))
+        files = []
+        # get the list of file names to parse
+        for (_, _, file_names) in os.walk(dir_path):
+            # filter .gz files
+            file_names = filter(lambda name: name.split('.')[-1] == 'gz', file_names)
+            files.extend([os.path.join(dir_path, file_name) for file_name in file_names])
+            # os.walk runs recursively over the whole directory tree. I want to stop at the first level.
+            break
+        log.info('Files found: %s', files)
+        # check if we got any files to parse
+        if not files:
+            raise FileNotFoundError('No files found on the specified path: {}'.format(dir_path))
 
-            if arrow.utcnow().date() != csv_timeslot_dict['date'].date():
+        for file in files:
+            log.info('Processing file: %s', file)
+            # check if the file needs to be parsed.
+            input_file_instance = self.should_be_parsed(file)
+            if not input_file_instance:
                 continue
-            try:
-                group = DeviceGroup.objects.get(id=csv_timeslot_dict['group_id'])
-            except KeyError as err:
-                log.exception('Key `group_id` not found in dict. %s', err)
-                sys.exit(1)
-            except Exception as err:
-                log.exception('Group with ID: % not found. %s', csv_timeslot_dict['group_id'], err)
-                sys.exit(1)
-            schedule_type = 'weekday' if csv_timeslot_dict['date'].isoweekday() <= 5 else 'weekend'
-            schedule = group.schedules.get(schedule_type=schedule_type)
-            time_slots = schedule.time_slots.all()
-            # get the force charging timeslot
-            c_time_slot = time_slots.get(state='C')
-            # get the force discharging timeslot
-            i_time_slot = time_slots.get(state='I')
-            # get the only charging timeslot
-            h_time_slot = time_slots.get(state='H')
 
-            # 'end_time': '2017-01-02T16:00:00.000Z',
-            # 'start_time': '2017-01-02T15:00:00.000Z',
-            i_time_slot.start_time = csv_timeslot_dict['start_time'].time()
-            i_time_slot.end_time = csv_timeslot_dict['end_time'].time()
-            i_time_slot.save()
-            log.info('Updated discharging slot: %s - %s', i_time_slot.start_time, i_time_slot.end_time)
-            h_time_slot.end_time = csv_timeslot_dict['start_time'].time()
-            h_time_slot.save()
-            log.info('Updated only charging slot: %s - %s', h_time_slot.start_time, h_time_slot.end_time)
+            chunks = extractor(file)
+            pr = cProfile.Profile()
+            pr.enable()
+            for chunk in chunks:
+                transform_and_load(chunk, input_file_instance)
+
+            print('Statistics for file: {}\n'.format(file))
+            print(json.dumps(self.compute_result(file), indent=2))
+            pr.disable()
+            s = io.StringIO()
+            sortby = 'cumulative'
+            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            ps.print_stats()
+            print(s.getvalue())

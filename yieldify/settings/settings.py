@@ -98,6 +98,7 @@ DATABASES = {
     }
 }
 
+# set default renderer for all the views to JSONRenderer
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
@@ -107,7 +108,7 @@ REST_FRAMEWORK = {
 
 # Password validation
 # https://docs.djangoproject.com/en/1.11/ref/settings/#auth-password-validators
-
+# this was generated automatically by the django start_project command
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -129,7 +130,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
@@ -155,6 +156,9 @@ LOGGING = {
         'clear_view': {
             'format': '%(asctime)s %(levelname)9s %(lineno)4s %(module)s %(message)s',
             'datefmt': '%d.%m.%Y-%H:%M:%S'
+        },
+        'simple': {
+            'format': '%(message)s'
         },
     },
     'handlers': {
@@ -192,13 +196,13 @@ LOGGING = {
         },
         'console': {
             'level': 'DEBUG',
+            'formatter': 'simple',
             'class': 'logging.StreamHandler',
         },
     },
     'loggers': {
         'django': {
             'handlers': ['console'],
-            'level': 'DEBUG',
             'propagate': True,
         },
         'etl': {
@@ -220,3 +224,4 @@ LOGGING = {
     },
 }
 
+CHUNK_SIZE = 1024

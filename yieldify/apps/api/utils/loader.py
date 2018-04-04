@@ -1,112 +1,164 @@
 import os
-import argparse
-import gzip
-import logging
-from logging import handlers
 import pandas as pd
 import IP2Location
+from user_agents import parse
 
-filename = '/Users/mihaidobre/Downloads/input_data.gz'
-
-LOG = None
-
-
-def setup_logger():
-    global LOG
-    etl_logger = logging.getLogger('etl')
-    formatter = logging.Formatter(fmt='%(levelname)-8s %(asctime)s %(filename)s |%(lineno)4d| %(message)s',
-                                  datefmt='%a, %Y-%m-%d %H:%M:%S')
-    file_path = os.path.dirname(os.path.abspath(__file__))
-    file_name = os.sep.join([file_path, 'etl.log'])
-    print('file_path: ', file_path)
-    handler = handlers.RotatingFileHandler(file_name, maxBytes=1024*1024, backupCount=5)
-    handler.setFormatter(formatter)
-    etl_logger.addHandler(handler)
-    etl_logger.setLevel(logging.DEBUG)
-    LOG = etl_logger
+from django.conf import settings
+from django.db import transaction
+from ..models import IP, Agent, CustomUser, Request
+from ..log import log_etl as log
 
 
-def extracter(file_name, chunk_size):
+def extractor(file_name):
     """
     Method that reads a file in chunks of chunk_size
-    :param filename: name of the file
+    :param file_name: name of the file
     :param chunk_size: the size of the batches
     :return: a list of dataframes. A dataframe is a list of chunk_size rows containing the row index as first element.
     """
-    LOG.info('Extracter is running for file: %s', file_name)
+    log.info('Extractor is running for file: %s', file_name)
     chunk_list = []
     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
     # url column is not needed for the task so it's not loaded from the file (improves performance)
     for chunk in pd.read_csv(file_name,
                              sep='\t',
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
-                             chunksize=chunk_size,
+                             chunksize=settings.CHUNK_SIZE,
                              compression='gzip',
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
-            LOG.info('Extracted chunk: %s', chunk.size)
-            chunk_list.append(chunk)
+        log.info('Extracted chunk: %s', chunk.axes[0])
+        chunk_list.append(chunk)
+        break
+
     return chunk_list
 
 
-def parse_countries_cities_ips(chunk, ip2loc_inst):
+def parse_countries_cities_ips(ip, ip2loc):
     """
-    Transform ips into countries.
-    :param chunk:
-    :return:
+    Transform ips into countries and cities. Creates the database ip instance but
+    without inserting it in the db.
+    :param ip: the ip in string format
+    :param ip2loc: the parser instance
+    :return: list of IP model instances
     """
     # the idea is to parse as few ips as possible for maximum performance
     # there are rows with multiple IPs comma separated
     # build a dictionary with
-    country = ip2loc_inst.get_country_long("19.5.10.1")
-    city = ip2loc_inst.get_city()
-    print rec.country_long
+    ips = ip.split(',')
+    ips_instances = []
+    for ip in ips:
+        ip = ip.strip()
+        try:
+            country = ip2loc.get_country_long(ip)
+            city = ip2loc.get_city(ip)
+            log.info('Parsed IP: %s | %s | %s', ip, city, country)
+            ips_instances.append(IP(ip=ip, city=city, country=country))
+        except Exception:
+            log.exception('Unable to get city/country of ip: %s', ip)
+    return ips_instances
 
-    print rec.city
 
-
-def transformer(chunk_list):
+def parse_user_agent(ua_string):
     """
-    Method that receives a chunk and processes it.
-    Parses the ips -> cities and countries(number of events).
-    Parses the user agent -> Browser and OS(unique users).
-    :param chunk: a set of data records
-    :return: a list of transformed records / result to print to stdout
+    Method that parses the user agent string. It identifies the browser,
+    browser version, os and os version, device manufacturer and device type:mobile,tablet,
+    pc,console.
+    Method is also creating the database object, without actually inserting it in the db.
+    :param ua_string:
+    :return: Agent instance
     """
-    parsed_data = []
-    ip2loc_inst = IP2Location.IP2Location()
-    bin_config = 'data/IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ZIPCODE-TIMEZONE-ISP-DOMAIN-NETSPEED-AREACODE-WEATHER-MOBILE-ELEVATION-USAGETYPE-SAMPLE.BIN'
-    ip2loc_inst.open(bin_config)
-    for chunk in chunk_list:
-        (countries, cities) = parse_countries_cities_ips(chunk, ip2loc_inst)
-        browser = parse_browsers_user_agent(chunk)
-        os = parse_os_user_agent(chunk)
-
-
-def loader():
-    """
-    Loads the data resulted from parsing into a database for further use/processing
-    :return:
-    """
-    pass
-
-
-def etl(file_name, chunk_size, destination=None):
-    """
-    Main method that does all the calculations in case output to stdout or fills the database in case of api.
-    :param filename: name of the file to be parsed
-    :param chunk_size: how many rows to read from file at once
-    :param destination: None for stdout, database pointer if API
-    :return:
-    """
-    setup_logger()
-    result = {'countries': [], 'cities': [], 'browsers': [], 'os': []}
-    LOG.info('Processing file: %s', file_name)
-    chunk_list = extracter(file_name, chunk_size)
-    result = transformer(chunk_list, destination)
-    if destination:
-        loader(destination)
+    try:
+        result = parse(ua_string)
+    except Exception:
+        log.exception('Unable to parse user agent: %s', ua_string)
+        return None
+    agent = Agent()
+    if len(ua_string) >= 256:
+        log.warning('ua_string > 256. Will be truncated: %s', ua_string)
+    agent.agent_string = ua_string[:256]
+    agent.op_sys = result.os.family
+    agent.op_sys_version = result.os.version_string
+    agent.browser = result.browser.family
+    agent.browser_version = result.browser.version_string
+    agent.device = result.device.family
+    agent.device_brand = result.device.brand
+    if result.is_pc:
+        agent.device_type = 'desktop'
+    elif result.is_bot:
+        agent.device_type = 'crawler'
+    elif result.is_mobile:
+        agent.device_type = 'mobile'
+    elif result.is_tablet:
+        agent.device_type = 'tablet'
     else:
-        print(result)
+        agent.device_type = 'unknown'
+    return agent
 
-if __name__ == '__main__':
-    etl(filename, 1024)
+
+@transaction.atomic
+def parse_user(user):
+    """
+    It's not parsing anything, just creates a CustomUser instance
+    :param user: user_id string
+    :return: CustomUser instance
+    """
+    # check if the user is already in the database. It must be unique
+    try:
+        u = CustomUser.objects.get(user_id=user)
+    except Exception:
+        u = CustomUser(user_id=user)
+        u.save()
+    return u
+
+
+def transform_and_load(chunk, input_file_instance):
+    """
+    Transforms the data and loads it into a database for further use/processing
+    :return:
+    """
+    # initialize IP parsers
+    ip_info = ['IP',
+               'COUNTRY',
+               'REGION',
+               'CITY',
+               ]
+    ip2loc = IP2Location.IP2Location()
+    ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
+
+    range_index = chunk.axes[0]
+    ip_instances = []
+    user_agent_instances = []
+    user_instances = []
+    request_instances = []
+    for i in range_index.values:
+        ips = parse_countries_cities_ips(chunk.IP[i], ip2loc)
+        user_agent = parse_user_agent(chunk.user_agent_string[i])
+        user = parse_user(chunk.user_id[i])
+        # if one of the components failed to parse, skip the row
+        if not ips or not user_agent or not user:
+            log.warning('Skipping row %s', i)
+            continue
+
+        ip_instances.extend(ips)
+        user_agent_instances.append(user_agent)
+        user_instances.append(user)
+        date_time = chunk.date_time[i].to_pydatetime()
+        for ip in ips:
+            request_instances.append({
+                'timestamp': date_time,
+                'ip': ip,
+                'agent': user_agent,
+                'user': user,
+                'file': input_file_instance
+            })
+    # use bulk_create to avoid calling the save() method for each instance.
+    # with bulk_create you can insert all the instance in one query
+    # save the requests last because we need the references at the database level
+    IP.objects.bulk_create(ip_instances)
+    log.info('Created ips: %s', len(ip_instances))
+    Agent.objects.bulk_create(user_agent_instances)
+    log.info('Created agents: %s', len(user_agent_instances))
+    log.info('Created user_ids: %s', len(user_instances))
+    Request.objects.bulk_create([Request(**request) for request in request_instances])
+    log.info('Created requests: %s', len(request_instances))
+    log.info('Database loaded with bach: %s', range_index)
