@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
-from ..log import log_browser as log
+from ..log import log_op_sys as log
 
 
 class OpSysView(APIView):
