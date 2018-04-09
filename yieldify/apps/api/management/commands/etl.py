@@ -1,10 +1,12 @@
 import os
 from hashlib import md5
 import json
+import itertools
 import cProfile, pstats, io
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db.models import Count
+from django.conf import settings
 from yieldify.apps.api.log import log_etl as log
 from yieldify.apps.api.utils import extractor, transform_and_load
 from yieldify.apps.api.models import InputFile, IP, Request, CustomUser, Agent
@@ -49,7 +51,7 @@ class Command(BaseCommand):
             if db_file.md5 != computed_md5:
                 log.info('File has been modified. Updating md5: %s', file)
                 db_file.md5 = computed_md5
-                db_file.save()
+                # db_file.save()
                 input_file_instance = db_file
         except ObjectDoesNotExist:
             # file not found in the database. Should be added and parsed
@@ -58,7 +60,7 @@ class Command(BaseCommand):
             db_file.name = file.split(os.sep)[-1]
             db_file.md5 = computed_md5
             db_file.path = file
-            db_file.save()
+            # db_file.save()
             input_file_instance = db_file
         except MultipleObjectsReturned:
             log.exception('get returned multiple results. Please check the database for consistency.')
@@ -111,6 +113,28 @@ class Command(BaseCommand):
         result['os'] = ['{}    {}'.format(x['op_sys'], x['count']) for x in oss]
         return result
 
+    def parse_requests(self, row):
+        """
+
+        :param date_time:
+        :param user:
+        :param agent:
+        :param ips:
+        :return:
+        """
+        # if (not user) or \
+        #     (not agent) or \
+        #         (not ips):
+        #     raise ValueError('{} | {} | {}'.format(user, agent, ips))
+        # log.info('row details: %s', row.axes)
+        # log.info('row details 2: %s', row.dtype)
+        # log.info('row: %s | %s | %s | %s', row.date_time, row.custom_users, row.agent_instances, row.ip_instances)
+        return Request(timestamp=row.date_time.to_pydatetime(),
+                        user=row.custom_users,
+                        agent=row.agent_instances[0],
+                        ip=row.ip_instances[0])
+        # return row
+
     def handle(self, *args, **options):
         """
         Method that iterates over the files in a directory. Parses all the tsv files, enhances the data and pushes it
@@ -122,7 +146,6 @@ class Command(BaseCommand):
         :param options: is a dictionary containing the command line arguments.
         :return:
         """
-        log.info(options)
         dir_path = options['dir']
         if not os.path.exists(dir_path):
             raise NotADirectoryError('Path specified for -dir argument is not valid: {}'.format(dir_path))
@@ -147,11 +170,23 @@ class Command(BaseCommand):
                 continue
 
             chunks = extractor(file)
-            # pr = cProfile.Profile()
-            # pr.enable()
+            pr = cProfile.Profile()
+            pr.enable()
+            users = {}
+            log.info('users_dict: %s', id(users))
             for chunk in chunks:
-                transform_and_load(chunk, input_file_instance)
-            # pr.disable()
+                transform_and_load(chunk, input_file_instance, users)
+
+            CustomUser.objects.bulk_create(users.values(), batch_size=settings.CHUNK_SIZE)
+            for chunk in chunks:
+                log.info('##### check ips: %s', chunk.ip_instances[8:12])
+                request = chunk.groupby(by=['date_time', 'custom_users', 'ip_instances', 'agent_instances'], sort=False, axis=1)
+
+                x = chunk.apply(self.parse_requests, axis=1)
+                log.info('###### request instances: %s', x)
+                Request.objects.bulk_create(list(itertools.chain.from_iterable(x)))
+            pr.disable()
+            pr.print_stats(sort=-1)
             # s = io.StringIO()
             # sortby = 'cumulative'
             # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)

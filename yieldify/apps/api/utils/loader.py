@@ -2,9 +2,8 @@ import os
 import pandas as pd
 import IP2Location
 from user_agents import parse
-
+import itertools
 from django.conf import settings
-from django.db import transaction
 from ..models import IP, Agent, CustomUser, Request
 from ..log import log_etl as log
 
@@ -47,12 +46,9 @@ def parse_countries_cities_ips(ip, ip2loc):
     ips = ip.split(',')
     ips_instances = []
     for ip in ips:
-        ip = ip.strip()
         try:
-            country = ip2loc.get_country_long(ip)
-            city = ip2loc.get_city(ip)
-            log.info('Parsed IP: %s | %s | %s', ip, city, country)
-            ips_instances.append(IP(ip=ip, city=city, country=country))
+            ip_all = ip2loc.get_all(ip.strip())
+            ips_instances.append(IP(ip=ip, city=ip_all.city, country=ip_all.country_long))
         except Exception:
             log.exception('Unable to get city/country of ip: %s', ip)
     return ips_instances
@@ -67,12 +63,13 @@ def parse_user_agent(ua_string):
     :param ua_string:
     :return: Agent instance
     """
+    agent = Agent()
     try:
         result = parse(ua_string)
     except Exception:
         log.exception('Unable to parse user agent: %s', ua_string)
-        return None
-    agent = Agent()
+        return [agent]
+
     if len(ua_string) >= 256:
         log.warning('ua_string > 256. Will be truncated: %s', ua_string)
     agent.agent_string = ua_string[:256]
@@ -84,81 +81,108 @@ def parse_user_agent(ua_string):
     agent.device_brand = result.device.brand
     if result.is_pc:
         agent.device_type = 'desktop'
-    elif result.is_bot:
-        agent.device_type = 'crawler'
     elif result.is_mobile:
         agent.device_type = 'mobile'
     elif result.is_tablet:
         agent.device_type = 'tablet'
+    elif result.is_bot:
+        agent.device_type = 'crawler'
     else:
         agent.device_type = 'unknown'
-    return agent
+    return [agent]
 
 
-@transaction.atomic
-def parse_user(user):
+def parse_user(user_id, users):
     """
     It's not parsing anything, just creates a CustomUser instance
-    :param user: user_id string
+    :param user_id: user_id string
     :return: CustomUser instance
     """
     # check if the user is already in the database. It must be unique
     try:
-        u = CustomUser.objects.get(user_id=user)
+        u = users[user_id]
     except Exception:
-        u = CustomUser(user_id=user)
-        u.save()
+        u = CustomUser(user_id=user_id)
+        users[user_id] = u
     return u
 
 
-def transform_and_load(chunk, input_file_instance):
+def get_city_country(ip, ip2loc):
+    """
+    Get from one run the city and the country in a touple
+    :param ip:
+    :param ip2loc:
+    :return:
+    """
+    try:
+        ip_all = ip2loc.get_all(ip)
+        ip_instance = IP(ip=ip, city=ip_all.city, country=ip_all.country_long)
+    except Exception as err:
+        ip_instance = IP(ip=ip)
+    return ip_instance
+
+
+def transform_and_load(chunk, input_file_instance, users):
     """
     Transforms the data and loads it into a database for further use/processing
     :return:
     """
     # initialize IP parsers
-    ip_info = ['IP',
-               'COUNTRY',
-               'REGION',
-               'CITY',
-               ]
+
     ip2loc = IP2Location.IP2Location()
     ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
 
-    range_index = chunk.axes[0]
-    ip_instances = []
-    user_agent_instances = []
-    user_instances = []
-    request_instances = []
-    for i in range_index.values:
-        ips = parse_countries_cities_ips(chunk.IP[i], ip2loc)
-        user_agent = parse_user_agent(chunk.user_agent_string[i])
-        user = parse_user(chunk.user_id[i])
-        # if one of the components failed to parse, skip the row
-        if not ips or not user_agent or not user:
-            log.warning('Skipping row %s', i)
-            continue
+    chunk['ip_instances'] = chunk.IP.apply(lambda row: [get_city_country(ip.strip(), ip2loc) for ip in row.split(',')])
 
-        ip_instances.extend(ips)
-        user_agent_instances.append(user_agent)
-        user_instances.append(user)
-        date_time = chunk.date_time[i].to_pydatetime()
-        for ip in ips:
-            request_instances.append({
-                'timestamp': date_time,
-                'ip': ip,
-                'agent': user_agent,
-                'user': user,
-                'file': input_file_instance
-            })
-    # use bulk_create to avoid calling the save() method for each instance.
-    # with bulk_create you can insert all the instance in one query
-    # save the requests last because we need the references at the database level
-    IP.objects.bulk_create(ip_instances)
-    log.info('Created ips: %s', len(ip_instances))
-    Agent.objects.bulk_create(user_agent_instances)
-    log.info('Created agents: %s', len(user_agent_instances))
-    log.info('Created user_ids: %s', len(user_instances))
-    Request.objects.bulk_create([Request(**request) for request in request_instances])
-    log.info('Created requests: %s', len(request_instances))
+    chunk['agent_instances'] = chunk.user_agent_string.apply(parse_user_agent)
+    log.info('agent_column: %s', type(chunk.agent_instances[10]))
+    # those are not unique users. Unique users are in the users dict
+    chunk['custom_users'] = chunk.user_id.apply(lambda row: parse_user(row, users))
+
+    log.info('type chunk[custom_users]: %s', type(chunk.custom_users[20]))
+    log.info('users dict: %s', len(users.keys()))
+
+    # saving to database
+    IP.objects.bulk_create(list(itertools.chain.from_iterable(chunk.ip_instances)))
+    log.info('Created ips: %s', len(chunk.ip_instances))
+
+    Agent.objects.bulk_create(list(itertools.chain.from_iterable(chunk.agent_instances)))
+    log.info('Created agents: %s', len(chunk.agent_instances))
+
+    range_index = chunk.axes[0]
+    # ip_instances = []
+    # user_agent_instances = []
+    # user_instances = []
+    # request_instances = []
+    # for i in range_index.values:
+    #     ips = parse_countries_cities_ips(chunk.IP[i], ip2loc)
+    #     user_agent = parse_user_agent(chunk.user_agent_string[i])
+    #     user = parse_user(chunk.user_id[i])
+    #     # if one of the components failed to parse, skip the row
+    #     if not ips or not user_agent or not user:
+    #         log.warning('Skipping row %s', i)
+    #         continue
+    #
+    #     ip_instances.extend(ips)
+    #     user_agent_instances.append(user_agent)
+    #     user_instances.append(user)
+    #     date_time = chunk.date_time[i].to_pydatetime()
+    #     for ip in ips:
+    #         request_instances.append({
+    #             'timestamp': date_time,
+    #             'ip': ip,
+    #             'agent': user_agent,
+    #             'user': user,
+    #             'file': input_file_instance
+    #         })
+    # # use bulk_create to avoid calling the save() method for each instance.
+    # # with bulk_create you can insert all the instance in one query
+    # # save the requests last because we need the references at the database level
+    # IP.objects.bulk_create(ip_instances)
+    # log.info('Created ips: %s', len(ip_instances))
+    # Agent.objects.bulk_create(user_agent_instances)
+    # log.info('Created agents: %s', len(user_agent_instances))
+    # log.info('Created user_ids: %s', len(user_instances))
+    # Request.objects.bulk_create([Request(**request) for request in request_instances])
+    # log.info('Created requests: %s', len(request_instances))
     log.info('Database loaded with bach: %s', range_index)

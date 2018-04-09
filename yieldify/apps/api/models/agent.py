@@ -20,15 +20,17 @@ class Agent(models.Model):
     browser_version = models.CharField(max_length=16, blank=True, null=True)
 
     def __str__(self):
-        return '{} {} | {} {} | {}'.format(self.op_sys,
-                                           self.op_sys_version,
-                                           self.browser,
-                                           self.browser_version,
-                                           self.device)
+        return '{} {} | {} {} | {} | {}'.format(self.op_sys,
+                                                self.op_sys_version,
+                                                self.browser,
+                                                self.browser_version,
+                                                self.device,
+                                                self.device_type)
 
     def __unicode__(self):
-        return '{} {} | {} {} | {}'.format(self.op_sys,
-                                           self.op_sys_version,
-                                           self.browser,
-                                           self.browser_version,
-                                           self.device)
+        return '{} {} | {} {} | {} | {}'.format(self.op_sys,
+                                                self.op_sys_version,
+                                                self.browser,
+                                                self.browser_version,
+                                                self.device,
+                                                self.device_type)
