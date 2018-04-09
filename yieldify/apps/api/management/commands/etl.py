@@ -201,20 +201,15 @@ class Command(BaseCommand):
 
             # log.info(result)
             users = result[0].append(result[1:], ignore_index=True)
-            log.info('##########  Unique users: %s', users.custom_user.size)
-
             users.drop_duplicates(subset='user_id', inplace=True)
             log.info('##########  Unique users: %s', users.custom_user.size)
             log.info('Users structure: %s', users.axes)
             users = users.set_index('user_id')
-            # users = users.drop('user_id')
-            log.info('Unique users: %s', users.size)
             log.info('Users structure: %s', users.axes)
 
             for chunk in chunks:
                 transform_and_load(chunk, input_file_instance, users)
 
-            log.info('custom_users to db: %s', type(users.custom_user.values))
             CustomUser.objects.bulk_create(list(users.custom_user.values), batch_size=settings.CHUNK_SIZE)
             for chunk in chunks:
                 index = 0
