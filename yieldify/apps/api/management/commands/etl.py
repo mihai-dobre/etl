@@ -171,28 +171,24 @@ class Command(BaseCommand):
                 continue
 
             chunks = extractor(file)
+            users = {}
+            # log.info('users_dict: %s', id(users))
             pr = cProfile.Profile()
             pr.enable()
-            users = {}
-            log.info('users_dict: %s', id(users))
             for chunk in chunks:
                 transform_and_load(chunk, input_file_instance, users)
 
             CustomUser.objects.bulk_create(users.values(), batch_size=settings.CHUNK_SIZE)
             for chunk in chunks:
-                log.info('##### check ips: %s', chunk.ip_instances[8:12])
-                request = chunk.groupby(by=['date_time', 'custom_users', 'ip_instances', 'agent_instances'], sort=False, axis=1)
-
                 index = 0
                 while True:
                     x = chunk.apply(lambda row: self.parse_requests(index, row, input_file_instance), axis=1)
                     x = x.dropna()
-                    log.info('index: %s', index)
-                    log.info('dtype of x: %s', x.dtype)
-                    log.info('###### request instances: %s', list(x.values)[:3])
+                    # log.info('dtype of x: %s', x.dtype)
+                    # log.info('###### request instances: %s', list(x.values)[:3])
                     if len(x.dropna().values) == 0:
                         break
-                    log.info('Created requests: %s', len(list(x.values)))
+                    # log.info('Created requests: %s', len(list(x.values)))
                     Request.objects.bulk_create(list(x.values))
                     index += 1
 

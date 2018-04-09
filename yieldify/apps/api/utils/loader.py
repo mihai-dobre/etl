@@ -27,7 +27,7 @@ def extractor(file_name):
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        # break
+        break
 
     return chunk_list
 
@@ -70,8 +70,8 @@ def parse_user_agent(ua_string):
         log.exception('Unable to parse user agent: %s', ua_string)
         return [agent]
 
-    if len(ua_string) >= 256:
-        log.warning('ua_string > 256. Will be truncated: %s', ua_string)
+    # if len(ua_string) >= 256:
+    #     log.warning('ua_string > 256. Will be truncated: %s', ua_string)
     agent.agent_string = ua_string[:256]
     agent.op_sys = result.os.family
     agent.op_sys_version = result.os.version_string
