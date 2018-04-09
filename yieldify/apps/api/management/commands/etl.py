@@ -1,7 +1,7 @@
 import os
 from hashlib import md5
 import json
-import itertools
+import numpy as np
 import cProfile, pstats, io
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
@@ -51,7 +51,7 @@ class Command(BaseCommand):
             if db_file.md5 != computed_md5:
                 log.info('File has been modified. Updating md5: %s', file)
                 db_file.md5 = computed_md5
-                # db_file.save()
+                db_file.save()
                 input_file_instance = db_file
         except ObjectDoesNotExist:
             # file not found in the database. Should be added and parsed
@@ -60,7 +60,7 @@ class Command(BaseCommand):
             db_file.name = file.split(os.sep)[-1]
             db_file.md5 = computed_md5
             db_file.path = file
-            # db_file.save()
+            db_file.save()
             input_file_instance = db_file
         except MultipleObjectsReturned:
             log.exception('get returned multiple results. Please check the database for consistency.')
@@ -113,7 +113,7 @@ class Command(BaseCommand):
         result['os'] = ['{}    {}'.format(x['op_sys'], x['count']) for x in oss]
         return result
 
-    def parse_requests(self, row):
+    def parse_requests(self, index, row, input_file):
         """
 
         :param date_time:
@@ -132,7 +132,8 @@ class Command(BaseCommand):
         return Request(timestamp=row.date_time.to_pydatetime(),
                         user=row.custom_users,
                         agent=row.agent_instances[0],
-                        ip=row.ip_instances[0])
+                        ip=row.ip_instances[index],
+                       file=input_file) if len(row.ip_instances) > index else np.nan
         # return row
 
     def handle(self, *args, **options):
@@ -182,15 +183,26 @@ class Command(BaseCommand):
                 log.info('##### check ips: %s', chunk.ip_instances[8:12])
                 request = chunk.groupby(by=['date_time', 'custom_users', 'ip_instances', 'agent_instances'], sort=False, axis=1)
 
-                x = chunk.apply(self.parse_requests, axis=1)
-                log.info('###### request instances: %s', x)
-                Request.objects.bulk_create(list(itertools.chain.from_iterable(x)))
+                index = 0
+                while True:
+                    x = chunk.apply(lambda row: self.parse_requests(index, row, input_file_instance), axis=1)
+                    x = x.dropna()
+                    log.info('index: %s', index)
+                    log.info('dtype of x: %s', x.dtype)
+                    log.info('###### request instances: %s', list(x.values)[:3])
+                    if len(x.dropna().values) == 0:
+                        break
+                    log.info('Created requests: %s', len(list(x.values)))
+                    Request.objects.bulk_create(list(x.values))
+                    index += 1
+
+                log.info('Database loaded with bach: %s', chunk.index)
             pr.disable()
-            pr.print_stats(sort=-1)
-            # s = io.StringIO()
-            # sortby = 'cumulative'
-            # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            # ps.print_stats()
-            # print(s.getvalue())
+            # pr.print_stats(sort=-1)
+            s = io.StringIO()
+            sortby = 'cumulative'
+            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            ps.print_stats()
+            print(s.getvalue())
 
         print(json.dumps(self.compute_result(file), indent=2))

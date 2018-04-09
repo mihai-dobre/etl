@@ -27,7 +27,7 @@ def extractor(file_name):
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        break
+        # break
 
     return chunk_list
 
@@ -135,12 +135,12 @@ def transform_and_load(chunk, input_file_instance, users):
     chunk['ip_instances'] = chunk.IP.apply(lambda row: [get_city_country(ip.strip(), ip2loc) for ip in row.split(',')])
 
     chunk['agent_instances'] = chunk.user_agent_string.apply(parse_user_agent)
-    log.info('agent_column: %s', type(chunk.agent_instances[10]))
+    # log.info('agent_column: %s', type(chunk.agent_instances[10]))
     # those are not unique users. Unique users are in the users dict
     chunk['custom_users'] = chunk.user_id.apply(lambda row: parse_user(row, users))
 
-    log.info('type chunk[custom_users]: %s', type(chunk.custom_users[20]))
-    log.info('users dict: %s', len(users.keys()))
+    # log.info('type chunk[custom_users]: %s', type(chunk.custom_users[20]))
+    # log.info('users dict: %s', len(users.keys()))
 
     # saving to database
     IP.objects.bulk_create(list(itertools.chain.from_iterable(chunk.ip_instances)))
@@ -149,40 +149,3 @@ def transform_and_load(chunk, input_file_instance, users):
     Agent.objects.bulk_create(list(itertools.chain.from_iterable(chunk.agent_instances)))
     log.info('Created agents: %s', len(chunk.agent_instances))
 
-    range_index = chunk.axes[0]
-    # ip_instances = []
-    # user_agent_instances = []
-    # user_instances = []
-    # request_instances = []
-    # for i in range_index.values:
-    #     ips = parse_countries_cities_ips(chunk.IP[i], ip2loc)
-    #     user_agent = parse_user_agent(chunk.user_agent_string[i])
-    #     user = parse_user(chunk.user_id[i])
-    #     # if one of the components failed to parse, skip the row
-    #     if not ips or not user_agent or not user:
-    #         log.warning('Skipping row %s', i)
-    #         continue
-    #
-    #     ip_instances.extend(ips)
-    #     user_agent_instances.append(user_agent)
-    #     user_instances.append(user)
-    #     date_time = chunk.date_time[i].to_pydatetime()
-    #     for ip in ips:
-    #         request_instances.append({
-    #             'timestamp': date_time,
-    #             'ip': ip,
-    #             'agent': user_agent,
-    #             'user': user,
-    #             'file': input_file_instance
-    #         })
-    # # use bulk_create to avoid calling the save() method for each instance.
-    # # with bulk_create you can insert all the instance in one query
-    # # save the requests last because we need the references at the database level
-    # IP.objects.bulk_create(ip_instances)
-    # log.info('Created ips: %s', len(ip_instances))
-    # Agent.objects.bulk_create(user_agent_instances)
-    # log.info('Created agents: %s', len(user_agent_instances))
-    # log.info('Created user_ids: %s', len(user_instances))
-    # Request.objects.bulk_create([Request(**request) for request in request_instances])
-    # log.info('Created requests: %s', len(request_instances))
-    log.info('Database loaded with bach: %s', range_index)
