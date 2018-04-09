@@ -19,6 +19,7 @@ def extractor(file_name):
     chunk_list = []
     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
     # url column is not needed for the task so it's not loaded from the file (improves performance)
+    index = 0
     for chunk in pd.read_csv(file_name,
                              sep='\t',
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
@@ -27,7 +28,9 @@ def extractor(file_name):
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        break
+        if index > 4:
+            break
+        index += 1
 
     return chunk_list
 
