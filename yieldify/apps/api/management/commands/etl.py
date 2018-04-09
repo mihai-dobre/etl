@@ -147,9 +147,8 @@ class Command(BaseCommand):
         """
         # read the chunks and process the users. They must be unique
         # pd.DataFrame()
-        unique = pd.DataFrame(data=chunk.user_id.unique(), columns=['user_id'])
+        unique = pd.DataFrame(data=chunk.user_id, columns=['user_id'])
         unique['custom_user'] = unique.user_id.apply(lambda row: CustomUser(user_id=row))
-        log.info('unique custom_users, %s', unique.axes)
         return unique
 
     def handle(self, *args, **options):
@@ -207,6 +206,16 @@ class Command(BaseCommand):
             users = users.set_index('user_id')
             log.info('Users structure: %s', users.axes)
 
+            pr.disable()
+            # pr.print_stats(sort=-1)
+            s = io.StringIO()
+            sortby = 'cumulative'
+            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            ps.print_stats()
+            print(s.getvalue())
+
+            pr = cProfile.Profile()
+            pr.enable()
             for chunk in chunks:
                 transform_and_load(chunk, input_file_instance, users)
 

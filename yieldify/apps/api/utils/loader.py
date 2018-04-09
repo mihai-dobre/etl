@@ -28,8 +28,8 @@ def extractor(file_name):
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        if index > 4:
-            break
+        # if index > 4:
+        #     break
         index += 1
 
     return chunk_list
