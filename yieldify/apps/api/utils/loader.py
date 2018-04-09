@@ -19,6 +19,7 @@ def extractor(file_name):
     chunk_list = []
     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
     # url column is not needed for the task so it's not loaded from the file (improves performance)
+    index = 0
     for chunk in pd.read_csv(file_name,
                              sep='\t',
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
@@ -27,7 +28,9 @@ def extractor(file_name):
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        break
+        if index > 4:
+            break
+        index += 1
 
     return chunk_list
 
@@ -99,12 +102,8 @@ def parse_user(user_id, users):
     :return: CustomUser instance
     """
     # check if the user is already in the database. It must be unique
-    try:
-        u = users[user_id]
-    except Exception:
-        u = CustomUser(user_id=user_id)
-        users[user_id] = u
-    return u
+    # log.info('index %s', user_id)
+    return users.loc[user_id].custom_user
 
 
 def get_city_country(ip, ip2loc):

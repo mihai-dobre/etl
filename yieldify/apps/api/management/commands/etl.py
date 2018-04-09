@@ -2,7 +2,10 @@ import os
 from hashlib import md5
 import json
 import numpy as np
+import pandas as pd
 import cProfile, pstats, io
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db.models import Count
@@ -134,7 +137,20 @@ class Command(BaseCommand):
                         agent=row.agent_instances[0],
                         ip=row.ip_instances[index],
                        file=input_file) if len(row.ip_instances) > index else np.nan
-        # return row
+
+    def parse_user(self, chunk):
+        """
+        Triggers the actual read of the IoBuffer.
+        It is IO bound so I use multithreading.
+        :param chunk: user_id string
+        :return: CustomUser instance
+        """
+        # read the chunks and process the users. They must be unique
+        # pd.DataFrame()
+        unique = pd.DataFrame(data=chunk.user_id.unique(), columns=['user_id'])
+        unique['custom_user'] = unique.user_id.apply(lambda row: CustomUser(user_id=row))
+        log.info('unique custom_users, %s', unique.axes)
+        return unique
 
     def handle(self, *args, **options):
         """
@@ -170,15 +186,36 @@ class Command(BaseCommand):
             if not input_file_instance:
                 continue
 
+            chunks = []
+            procs = 4
             chunks = extractor(file)
             users = {}
             # log.info('users_dict: %s', id(users))
             pr = cProfile.Profile()
             pr.enable()
+            result = []
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(self.parse_user, chunk) for chunk in chunks]
+                for future in as_completed(futures):
+                    result.append(future.result())
+
+            # log.info(result)
+            users = result[0].append(result[1:], ignore_index=True)
+            log.info('##########  Unique users: %s', users.custom_user.size)
+
+            users.drop_duplicates(subset='user_id', inplace=True)
+            log.info('##########  Unique users: %s', users.custom_user.size)
+            log.info('Users structure: %s', users.axes)
+            users = users.set_index('user_id')
+            # users = users.drop('user_id')
+            log.info('Unique users: %s', users.size)
+            log.info('Users structure: %s', users.axes)
+
             for chunk in chunks:
                 transform_and_load(chunk, input_file_instance, users)
 
-            CustomUser.objects.bulk_create(users.values(), batch_size=settings.CHUNK_SIZE)
+            log.info('custom_users to db: %s', type(users.custom_user.values))
+            CustomUser.objects.bulk_create(list(users.custom_user.values), batch_size=settings.CHUNK_SIZE)
             for chunk in chunks:
                 index = 0
                 while True:
