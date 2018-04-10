@@ -61,7 +61,7 @@ To be able to access the django admin page you need to create a django superuser
  
 * etl management command:
   
-  `docker exec web python3 manage.py etl -dir '/code/input_files/'` or
+  `docker exec web python3 manage.py etl -dir '/code/input_data/'` or
   `docker exec web python3 manage.py etl -dir '/code/<your_own_input_files>/'`
   
 * api: 
