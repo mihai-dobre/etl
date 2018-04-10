@@ -4,8 +4,11 @@ import json
 import numpy as np
 import pandas as pd
 import cProfile, pstats, io
-import multiprocessing
+import IP2Location
+import pytz
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import Pool
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db.models import Count
@@ -125,17 +128,10 @@ class Command(BaseCommand):
         :param ips:
         :return:
         """
-        # if (not user) or \
-        #     (not agent) or \
-        #         (not ips):
-        #     raise ValueError('{} | {} | {}'.format(user, agent, ips))
-        # log.info('row details: %s', row.axes)
-        # log.info('row details 2: %s', row.dtype)
-        # log.info('row: %s | %s | %s | %s', row.date_time, row.custom_users, row.agent_instances, row.ip_instances)
-        return Request(timestamp=row.date_time.to_pydatetime(),
-                        user=row.custom_users,
-                        agent=row.agent_instances[0],
-                        ip=row.ip_instances[index],
+        return Request(timestamp=row.date_time.to_pydatetime().astimezone(tz=pytz.utc),
+                       user=row.custom_users,
+                       agent=row.agent_instances,
+                       ip=row.ip_instances[index],
                        file=input_file) if len(row.ip_instances) > index else np.nan
 
     def parse_user(self, chunk):
@@ -150,6 +146,28 @@ class Command(BaseCommand):
         unique = pd.DataFrame(data=chunk.user_id, columns=['user_id'])
         unique['custom_user'] = unique.user_id.apply(lambda row: CustomUser(user_id=row))
         return unique
+
+    def process_chunk(self, chunk, users, input_file_instance):
+        """
+
+        :param chunk:
+        :return:
+        """
+        ip2loc = IP2Location.IP2Location()
+        ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
+        df = pd.read_json(chunk)
+        transform_and_load(df, users, ip2loc)
+
+        x = df.apply(lambda row: self.parse_requests(0, row, input_file_instance), axis=1)
+        Request.objects.bulk_create(list(x.values))
+        x = df.apply(lambda row: self.parse_requests(1, row, input_file_instance), axis=1)
+        log.info('type x: %s', type(x))
+        x.dropna(inplace=True)
+        log.info('size after: %s', x.size)
+        Request.objects.bulk_create(list(x.values))
+
+        # log.info('Database loaded with bach: %s', chunk.index)
+        return 'Database loaded with bach: {}'.format(chunk.index)
 
     def handle(self, *args, **options):
         """
@@ -185,61 +203,28 @@ class Command(BaseCommand):
             if not input_file_instance:
                 continue
 
-            chunks = []
-            procs = 4
+            start = time.time()
             chunks = extractor(file)
-            users = {}
             # log.info('users_dict: %s', id(users))
-            pr = cProfile.Profile()
-            pr.enable()
             result = []
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = [executor.submit(self.parse_user, chunk) for chunk in chunks]
                 for future in as_completed(futures):
                     result.append(future.result())
 
-            # log.info(result)
             users = result[0].append(result[1:], ignore_index=True)
             users.drop_duplicates(subset='user_id', inplace=True)
-            log.info('##########  Unique users: %s', users.custom_user.size)
-            log.info('Users structure: %s', users.axes)
+            log.info('Users: %s', users.user_id.size)
             users = users.set_index('user_id')
-            log.info('Users structure: %s', users.axes)
-
-            pr.disable()
-            # pr.print_stats(sort=-1)
-            s = io.StringIO()
-            sortby = 'cumulative'
-            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            ps.print_stats()
-            print(s.getvalue())
-
-            pr = cProfile.Profile()
-            pr.enable()
-            for chunk in chunks:
-                transform_and_load(chunk, input_file_instance, users)
 
             CustomUser.objects.bulk_create(list(users.custom_user.values), batch_size=settings.CHUNK_SIZE)
-            for chunk in chunks:
-                index = 0
-                while True:
-                    x = chunk.apply(lambda row: self.parse_requests(index, row, input_file_instance), axis=1)
-                    x = x.dropna()
-                    # log.info('dtype of x: %s', x.dtype)
-                    # log.info('###### request instances: %s', list(x.values)[:3])
-                    if len(x.dropna().values) == 0:
-                        break
-                    # log.info('Created requests: %s', len(list(x.values)))
-                    Request.objects.bulk_create(list(x.values))
-                    index += 1
 
-                log.info('Database loaded with bach: %s', chunk.index)
-            pr.disable()
-            # pr.print_stats(sort=-1)
-            s = io.StringIO()
-            sortby = 'cumulative'
-            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            ps.print_stats()
-            print(s.getvalue())
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [executor.submit(self.process_chunk,
+                                           *[chunk, users, input_file_instance]) for chunk in chunks]
+                for future in as_completed(futures):
+                    log.info(future.result())
+
+            print('Total running time: %s', time.time()-start)
 
         print(json.dumps(self.compute_result(file), indent=2))

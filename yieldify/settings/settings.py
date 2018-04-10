@@ -238,4 +238,4 @@ LOGGING = {
     },
 }
 
-CHUNK_SIZE = 1024
+CHUNK_SIZE = 128

@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import IP2Location
 from user_agents import parse
 import itertools
 from django.conf import settings
@@ -25,36 +24,35 @@ def extractor(file_name):
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
                              chunksize=settings.CHUNK_SIZE,
                              compression='gzip',
-                             parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5]):
+                             parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5],
+                             engine='c'):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        # if index > 4:
-        #     break
+        if index > 10:
+            break
         index += 1
 
     return chunk_list
 
-
-def parse_countries_cities_ips(ip, ip2loc):
-    """
-    Transform ips into countries and cities. Creates the database ip instance but
-    without inserting it in the db.
-    :param ip: the ip in string format
-    :param ip2loc: the parser instance
-    :return: list of IP model instances
-    """
-    # the idea is to parse as few ips as possible for maximum performance
-    # there are rows with multiple IPs comma separated
-    # build a dictionary with
-    ips = ip.split(',')
-    ips_instances = []
-    for ip in ips:
-        try:
-            ip_all = ip2loc.get_all(ip.strip())
-            ips_instances.append(IP(ip=ip, city=ip_all.city, country=ip_all.country_long))
-        except Exception:
-            log.exception('Unable to get city/country of ip: %s', ip)
-    return ips_instances
+# def extractor(file_name):
+#     """
+#     Method that reads a file in chunks of chunk_size
+#     :param file_name: name of the file
+#     :param chunk_size: the size of the batches
+#     :return: a list of dataframes. A dataframe is a list of chunk_size rows containing the row index as first element.
+#     """
+#     log.info('Extractor is running for file: %s', file_name)
+#     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
+#     # url column is not needed for the task so it's not loaded from the file (improves performance)
+#     index = 0
+#     reader = pd.read_csv(file_name,
+#                              sep='\t',
+#                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
+#                              iterator=True,
+#                              compression='gzip',
+#                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5],
+#                              engine='c')
+#     return reader
 
 
 def parse_user_agent(ua_string):
@@ -92,7 +90,7 @@ def parse_user_agent(ua_string):
         agent.device_type = 'crawler'
     else:
         agent.device_type = 'unknown'
-    return [agent]
+    return agent
 
 
 def parse_user(user_id, users):
@@ -121,15 +119,12 @@ def get_city_country(ip, ip2loc):
     return ip_instance
 
 
-def transform_and_load(chunk, input_file_instance, users):
+def transform_and_load(chunk, users, ip2loc):
     """
     Transforms the data and loads it into a database for further use/processing
     :return:
     """
     # initialize IP parsers
-
-    ip2loc = IP2Location.IP2Location()
-    ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
 
     chunk['ip_instances'] = chunk.IP.apply(lambda row: [get_city_country(ip.strip(), ip2loc) for ip in row.split(',')])
 
@@ -142,9 +137,10 @@ def transform_and_load(chunk, input_file_instance, users):
     # log.info('users dict: %s', len(users.keys()))
 
     # saving to database
+    # log.info('Created ips: %s', chunk.ip_instances[-5:])
     IP.objects.bulk_create(list(itertools.chain.from_iterable(chunk.ip_instances)))
-    log.info('Created ips: %s', len(chunk.ip_instances))
 
-    Agent.objects.bulk_create(list(itertools.chain.from_iterable(chunk.agent_instances)))
-    log.info('Created agents: %s', len(chunk.agent_instances))
+    # log.info('Created agents: %s', chunk.agent_instances[-5:])
+    Agent.objects.bulk_create(list(chunk.agent_instances.values))
+
 
