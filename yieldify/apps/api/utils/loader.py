@@ -2,8 +2,10 @@ import os
 import pandas as pd
 from user_agents import parse
 import itertools
+import random
+import threading
 from django.conf import settings
-from ..models import IP, Agent, CustomUser, Request
+from ..models import IP, Agent
 from ..log import log_etl as log
 
 
@@ -22,37 +24,17 @@ def extractor(file_name):
     for chunk in pd.read_csv(file_name,
                              sep='\t',
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
-                             chunksize=settings.CHUNK_SIZE,
+                             chunksize=random.randint(settings.CHUNK_SIZE_MIN, settings.CHUNK_SIZE_MAX),
                              compression='gzip',
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5],
                              engine='c'):
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        if index > 10:
-            break
+        # if index > 10:
+        #     break
         index += 1
 
     return chunk_list
-
-# def extractor(file_name):
-#     """
-#     Method that reads a file in chunks of chunk_size
-#     :param file_name: name of the file
-#     :param chunk_size: the size of the batches
-#     :return: a list of dataframes. A dataframe is a list of chunk_size rows containing the row index as first element.
-#     """
-#     log.info('Extractor is running for file: %s', file_name)
-#     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
-#     # url column is not needed for the task so it's not loaded from the file (improves performance)
-#     index = 0
-#     reader = pd.read_csv(file_name,
-#                              sep='\t',
-#                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
-#                              iterator=True,
-#                              compression='gzip',
-#                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5],
-#                              engine='c')
-#     return reader
 
 
 def parse_user_agent(ua_string):
@@ -128,19 +110,17 @@ def transform_and_load(chunk, users, ip2loc):
 
     chunk['ip_instances'] = chunk.IP.apply(lambda row: [get_city_country(ip.strip(), ip2loc) for ip in row.split(',')])
 
+    # save into the database using a separate thread. This task is IO bound. Parsing the agents is CPU bound.
+    # maximize the use of CPU this way
+    threads = []
+    ip_thread = threading.Thread(target=IP.objects.bulk_create,
+                     args=[list(itertools.chain.from_iterable(chunk.ip_instances)), settings.CHUNK_SIZE])
+    threads.append(ip_thread)
+    ip_thread.start()
     chunk['agent_instances'] = chunk.user_agent_string.apply(parse_user_agent)
-    # log.info('agent_column: %s', type(chunk.agent_instances[10]))
-    # those are not unique users. Unique users are in the users dict
+
+    agent_thread = threading.Thread(target=Agent.objects.bulk_create,
+                     args=[list(chunk.agent_instances.values), settings.CHUNK_SIZE])
+    threads.append(agent_thread)
+    agent_thread.start()
     chunk['custom_users'] = chunk.user_id.apply(lambda row: parse_user(row, users))
-
-    # log.info('type chunk[custom_users]: %s', type(chunk.custom_users[20]))
-    # log.info('users dict: %s', len(users.keys()))
-
-    # saving to database
-    # log.info('Created ips: %s', chunk.ip_instances[-5:])
-    IP.objects.bulk_create(list(itertools.chain.from_iterable(chunk.ip_instances)))
-
-    # log.info('Created agents: %s', chunk.agent_instances[-5:])
-    Agent.objects.bulk_create(list(chunk.agent_instances.values))
-
-

@@ -3,12 +3,11 @@ from hashlib import md5
 import json
 import numpy as np
 import pandas as pd
-import cProfile, pstats, io
+import threading
 import IP2Location
 import pytz
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from multiprocessing import Pool
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db.models import Count
@@ -121,12 +120,11 @@ class Command(BaseCommand):
 
     def parse_requests(self, index, row, input_file):
         """
-
-        :param date_time:
-        :param user:
-        :param agent:
-        :param ips:
-        :return:
+        Return a series of Request instances, ready to save in the database.
+        :param index: the ip_instances series is a list of maximum 2 elements
+        :param row: row from the chunk dataframe(the big one)
+        :param input_file: a pointer to the file instance in the database. It is a foreign key
+        :return: Request instance
         """
         return Request(timestamp=row.date_time.to_pydatetime().astimezone(tz=pytz.utc),
                        user=row.custom_users,
@@ -136,35 +134,36 @@ class Command(BaseCommand):
 
     def parse_user(self, chunk):
         """
-        Triggers the actual read of the IoBuffer.
-        It is IO bound so I use multithreading.
+        Method used to calculate the custom_user instances and fill the database with unique ones.
         :param chunk: user_id string
         :return: CustomUser instance
         """
-        # read the chunks and process the users. They must be unique
-        # pd.DataFrame()
+        # create a 2 columns dataframe: user_id and custom_user
         unique = pd.DataFrame(data=chunk.user_id, columns=['user_id'])
         unique['custom_user'] = unique.user_id.apply(lambda row: CustomUser(user_id=row))
         return unique
 
     def process_chunk(self, chunk, users, input_file_instance):
         """
-
-        :param chunk:
+        Method that encapsulates all the processing needed for a chunk
+        :param chunk: chunk of file to be processed
+        :param users: dataframe with 2 columns containing all the unique users: user_id, custom_user
+        :param input_file_instance: database file pointer(used for foreignkey)
         :return:
         """
+        # create a ip2loc instance for each thread. Found out that this module is not thread safe
         ip2loc = IP2Location.IP2Location()
         ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
-        df = pd.read_json(chunk)
-        transform_and_load(df, users, ip2loc)
+        transform_and_load(chunk, users, ip2loc)
 
-        x = df.apply(lambda row: self.parse_requests(0, row, input_file_instance), axis=1)
-        Request.objects.bulk_create(list(x.values))
-        x = df.apply(lambda row: self.parse_requests(1, row, input_file_instance), axis=1)
-        log.info('type x: %s', type(x))
+        x = chunk.apply(lambda row: self.parse_requests(0, row, input_file_instance), axis=1)
+        threading.Thread(target=Request.objects.bulk_create,
+                         args=[list(x.values), settings.CHUNK_SIZE]).start()
+        # Request.objects.bulk_create(list(x.values))
+        x = chunk.apply(lambda row: self.parse_requests(1, row, input_file_instance), axis=1)
         x.dropna(inplace=True)
-        log.info('size after: %s', x.size)
-        Request.objects.bulk_create(list(x.values))
+        threading.Thread(target=Request.objects.bulk_create,
+                         args=[list(x.values), settings.CHUNK_SIZE]).start()
 
         # log.info('Database loaded with bach: %s', chunk.index)
         return 'Database loaded with bach: {}'.format(chunk.index)
@@ -219,12 +218,12 @@ class Command(BaseCommand):
 
             CustomUser.objects.bulk_create(list(users.custom_user.values), batch_size=settings.CHUNK_SIZE)
 
-            with ThreadPoolExecutor(max_workers=8) as executor:
+            with ThreadPoolExecutor(max_workers=16) as executor:
                 futures = [executor.submit(self.process_chunk,
                                            *[chunk, users, input_file_instance]) for chunk in chunks]
                 for future in as_completed(futures):
                     log.info(future.result())
 
-            print('Total running time: %s', time.time()-start)
+            print('Total running time: ', time.time()-start)
 
         print(json.dumps(self.compute_result(file), indent=2))

@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-print(BASE_DIR)
 
 for filename in os.listdir(BASE_DIR):
     if filename.endswith('.env'):
@@ -93,7 +92,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': DB_NAME,
         'USER': DB_USER,
-        'HOST': 'localhost',
+        'HOST': 'db',
         'PORT': DB_PORT,
     }
 }
@@ -238,4 +237,6 @@ LOGGING = {
     },
 }
 
-CHUNK_SIZE = 128
+CHUNK_SIZE = 1024
+CHUNK_SIZE_MIN = 512
+CHUNK_SIZE_MAX = 4096
