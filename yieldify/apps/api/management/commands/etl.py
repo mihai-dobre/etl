@@ -1,10 +1,13 @@
 import os
-from hashlib import md5
 import json
+from hashlib import md5
 import numpy as np
 import pandas as pd
 import threading
 import IP2Location
+import dask
+import itertools
+import dask.dataframe as dds
 import pytz
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -126,6 +129,7 @@ class Command(BaseCommand):
         :param input_file: a pointer to the file instance in the database. It is a foreign key
         :return: Request instance
         """
+        # log.info('ROW: %s', row)
         return Request(timestamp=row.date_time.to_pydatetime().astimezone(tz=pytz.utc),
                        user=row.custom_users,
                        agent=row.agent_instances,
@@ -152,21 +156,27 @@ class Command(BaseCommand):
         :return:
         """
         # create a ip2loc instance for each thread. Found out that this module is not thread safe
-        ip2loc = IP2Location.IP2Location()
-        ip2loc.open('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
-        transform_and_load(chunk, users, ip2loc)
+        ddf = dds.from_pandas(chunk, npartitions=16)
+        transform_and_load(ddf, users)
+        res = ddf.persist()
 
-        x = chunk.apply(lambda row: self.parse_requests(0, row, input_file_instance), axis=1)
-        threading.Thread(target=Request.objects.bulk_create,
-                         args=[list(x.values), settings.CHUNK_SIZE]).start()
-        # Request.objects.bulk_create(list(x.values))
-        x = chunk.apply(lambda row: self.parse_requests(1, row, input_file_instance), axis=1)
-        x.dropna(inplace=True)
-        threading.Thread(target=Request.objects.bulk_create,
-                         args=[list(x.values), settings.CHUNK_SIZE]).start()
+        IP.objects.bulk_create(list(itertools.chain.from_iterable(res.ip_instances.values.compute())))
+        Agent.objects.bulk_create(list(res.agent_instances.values.compute()))
 
-        # log.info('Database loaded with bach: %s', chunk.index)
-        return 'Database loaded with bach: {}'.format(chunk.index)
+        res['request0'] = res.apply(lambda row: self.parse_requests(0, row, input_file_instance), axis=1, meta=object)
+
+        res['request1'] = res.apply(lambda row: self.parse_requests(1, row, input_file_instance), axis=1, meta=object)
+
+        res = res.persist()
+
+        request1 = res.request1.dropna().compute()
+        requests = list(res.request0.values.compute()) + \
+                   list(request1.values) \
+            if request1.size > 0 else []
+        threading.Thread(target=Request.objects.bulk_create, args=(requests,)).start()
+
+        log.info('Database loaded with bach: %s', chunk.index)
+        # return 'Database loaded with bach: {}'.format(chunk.index)
 
     def handle(self, *args, **options):
         """
@@ -179,6 +189,7 @@ class Command(BaseCommand):
         :param options: is a dictionary containing the command line arguments.
         :return:
         """
+        dask.set_options(get=dask.threaded.get)
         dir_path = options['dir']
         if not os.path.exists(dir_path):
             raise NotADirectoryError('Path specified for -dir argument is not valid: {}'.format(dir_path))
@@ -217,13 +228,20 @@ class Command(BaseCommand):
             users = users.set_index('user_id')
 
             CustomUser.objects.bulk_create(list(users.custom_user.values), batch_size=settings.CHUNK_SIZE)
+            # the rest of the processing should be spread over multiple processes
+            log.info('CPUs: %s', os.cpu_count())
 
-            with ThreadPoolExecutor(max_workers=16) as executor:
-                futures = [executor.submit(self.process_chunk,
-                                           *[chunk, users, input_file_instance]) for chunk in chunks]
-                for future in as_completed(futures):
-                    log.info(future.result())
+            for chunk in chunks:
+                self.process_chunk(chunk, users, input_file_instance)
 
             print('Total running time: ', time.time()-start)
-
+        threads = threading.enumerate()
+        for t in threads:
+            try:
+                t.join()
+            except RuntimeError as err:
+                if 'cannot join current thread' in err:
+                    continue
+                else:
+                    raise
         print(json.dumps(self.compute_result(file), indent=2))

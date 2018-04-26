@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/1.11/ref/settings/
 
 import os
 from dotenv import load_dotenv
+from multiprocessing import Queue
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -92,7 +93,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': DB_NAME,
         'USER': DB_USER,
-        'HOST': 'db',
+        'HOST': 'localhost',
         'PORT': DB_PORT,
     }
 }
@@ -238,5 +239,5 @@ LOGGING = {
 }
 
 CHUNK_SIZE = 1024
-CHUNK_SIZE_MIN = 512
-CHUNK_SIZE_MAX = 4096
+CHUNK_SIZE_MAX = 1024*30
+

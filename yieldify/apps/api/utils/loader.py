@@ -1,8 +1,9 @@
 import os
 import pandas as pd
+import dask.dataframe as dds
 from user_agents import parse
 import itertools
-import random
+import IP2Location
 import threading
 from django.conf import settings
 from ..models import IP, Agent
@@ -21,18 +22,22 @@ def extractor(file_name):
     # merge date and time columns in a single date_time column(improves performance - speed and memory used)
     # url column is not needed for the task so it's not loaded from the file (improves performance)
     index = 0
+    # don't forget about the memory map
     for chunk in pd.read_csv(file_name,
                              sep='\t',
                              names=['date', 'time', 'user_id', 'url', 'IP', 'user_agent_string'],
-                             chunksize=random.randint(settings.CHUNK_SIZE_MIN, settings.CHUNK_SIZE_MAX),
+                             chunksize=settings.CHUNK_SIZE_MAX,
                              compression='gzip',
                              parse_dates=[[0, 1]], usecols=[0, 1, 2, 4, 5],
-                             engine='c'):
+                             engine='c',
+                             iterator=True,
+                             low_memory=False,
+                             memory_map=True):
+        # if index > 1:
+        #     break
+        # index += 1
         log.info('Extracted chunk: %s', chunk.axes[0])
         chunk_list.append(chunk)
-        # if index > 10:
-        #     break
-        index += 1
 
     return chunk_list
 
@@ -86,13 +91,14 @@ def parse_user(user_id, users):
     return users.loc[user_id].custom_user
 
 
-def get_city_country(ip, ip2loc):
+def get_city_country(ip):
     """
     Get from one run the city and the country in a touple
     :param ip:
     :param ip2loc:
     :return:
     """
+    ip2loc = IP2Location.IP2Location('IP2LOCATION-LITE-DB3.BIN/IP2LOCATION-LITE-DB3.BIN')
     try:
         ip_all = ip2loc.get_all(ip)
         ip_instance = IP(ip=ip, city=ip_all.city, country=ip_all.country_long)
@@ -101,26 +107,14 @@ def get_city_country(ip, ip2loc):
     return ip_instance
 
 
-def transform_and_load(chunk, users, ip2loc):
+def transform_and_load(ddf, users):
     """
     Transforms the data and loads it into a database for further use/processing
     :return:
     """
     # initialize IP parsers
+    ddf['ip_instances'] = ddf.IP.apply(lambda row: [get_city_country(ip.strip()) for ip in row.split(',')],
+                            meta=object)
+    ddf['agent_instances'] = ddf.user_agent_string.apply(parse_user_agent, meta=object)
+    ddf['custom_users'] = ddf.user_id.apply(lambda row: parse_user(row, users), meta=object)
 
-    chunk['ip_instances'] = chunk.IP.apply(lambda row: [get_city_country(ip.strip(), ip2loc) for ip in row.split(',')])
-
-    # save into the database using a separate thread. This task is IO bound. Parsing the agents is CPU bound.
-    # maximize the use of CPU this way
-    threads = []
-    ip_thread = threading.Thread(target=IP.objects.bulk_create,
-                     args=[list(itertools.chain.from_iterable(chunk.ip_instances)), settings.CHUNK_SIZE])
-    threads.append(ip_thread)
-    ip_thread.start()
-    chunk['agent_instances'] = chunk.user_agent_string.apply(parse_user_agent)
-
-    agent_thread = threading.Thread(target=Agent.objects.bulk_create,
-                     args=[list(chunk.agent_instances.values), settings.CHUNK_SIZE])
-    threads.append(agent_thread)
-    agent_thread.start()
-    chunk['custom_users'] = chunk.user_id.apply(lambda row: parse_user(row, users))

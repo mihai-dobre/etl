@@ -2,7 +2,7 @@ import datetime
 import pytz
 from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
-# from ..log import log_base_view as log
+
 
 
 class BaseView(ListAPIView):

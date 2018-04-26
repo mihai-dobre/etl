@@ -7,7 +7,7 @@ class IP(models.Model):
     country = models.CharField(max_length=64, blank=True, null=True)
 
     def __str__(self):
-        return '{} : {} from {}'.format(self.ip, self.city, self.country)
+        return '{} | {} : {} from {}'.format(self.id, self.ip, self.city, self.country)
 
     def __unicode__(self):
-        return '{} : {} from {}'.format(self.ip, self.city, self.country)
+        return '{} | {} : {} from {}'.format(self.id, self.ip, self.city, self.country)
