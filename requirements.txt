@@ -3,7 +3,6 @@ django-extensions==2.0.6
 djangorestframework==3.7.7
 Markdown==2.6.11
 pandas==0.22.0
-IP2Location==8.0.0
 psycopg2-binary==2.7.4
 python-dotenv==0.8.2
 PyYAML==3.12
@@ -11,3 +10,4 @@ ua-parser==0.7.3
 user-agents==1.1.0
 dask[complete]
 -e git+https://github.com/manosim/django-rest-framework-docs.git@master#egg=drfdocs
+-e git+https://github.com/mihai-dobre/IP2Location-Python.git@master#egg=IP2Location

@@ -19,6 +19,8 @@ from yieldify.apps.api.log import log_etl as log
 from yieldify.apps.api.utils import extractor, transform_and_load
 from yieldify.apps.api.models import InputFile, IP, Request, CustomUser, Agent
 
+THREADS = []
+
 
 class Command(BaseCommand):
     help = 'Read files from the input directory, load data to the database, print aggregated results'
@@ -155,6 +157,7 @@ class Command(BaseCommand):
         :param input_file_instance: database file pointer(used for foreignkey)
         :return:
         """
+        global THREADS
         # create a ip2loc instance for each thread. Found out that this module is not thread safe
         ddf = dds.from_pandas(chunk, npartitions=16)
         transform_and_load(ddf, users)
@@ -173,7 +176,9 @@ class Command(BaseCommand):
         requests = list(res.request0.values.compute()) + \
                    list(request1.values) \
             if request1.size > 0 else []
-        threading.Thread(target=Request.objects.bulk_create, args=(requests,)).start()
+        t = threading.Thread(target=Request.objects.bulk_create, args=(requests,))
+        t.start()
+        THREADS.append(t)
 
         log.info('Database loaded with bach: %s', chunk.index)
         # return 'Database loaded with bach: {}'.format(chunk.index)
@@ -235,13 +240,6 @@ class Command(BaseCommand):
                 self.process_chunk(chunk, users, input_file_instance)
 
             print('Total running time: ', time.time()-start)
-        threads = threading.enumerate()
-        for t in threads:
-            try:
-                t.join()
-            except RuntimeError as err:
-                if 'cannot join current thread' in err:
-                    continue
-                else:
-                    raise
+        for t in THREADS:
+            t.join()
         print(json.dumps(self.compute_result(file), indent=2))
